@@ -34,13 +34,13 @@ All health data is stored locally on the Mac.
 
 The end-to-end data flow from Mi Watch to the local analytics dashboard.
 
-![Mi Watch Dashboard Architecture](architecture.png)
+![Mi Watch Dashboard Architecture](Architecture.png)
 
 ## 📊 Dashboard Preview
 
 Explore your daily activity, sleep patterns, heart rate and other available health metrics.
 
-![Mi Watch Health Dashboard](screenshot.png)
+![Mi Watch Health Dashboard](Screenshot.png)
 
 ## 2. Prerequisites
 
