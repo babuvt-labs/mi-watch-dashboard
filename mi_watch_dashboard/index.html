@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi Watch Health Dashboard</title>
+<style>
+:root{--bg:#0b1220;--panel:#121d30;--panel2:#17243a;--text:#edf3ff;--muted:#9aabc4;--line:#263750;--accent:#64d6b0;--blue:#7daeff;--orange:#ffbd75;--red:#ff8585}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#0b1220,#101a2b);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:1320px;margin:auto;padding:28px 22px 50px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}
+h1{font-size:27px;margin:0 0 5px}.sub,.muted{color:var(--muted)}.sub{font-size:13px}.status{border:1px solid var(--line);border-radius:999px;padding:7px 12px;color:var(--accent);font-size:12px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0}
+input,button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 11px;font:inherit}button{cursor:pointer}button:hover{border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:rgba(18,29,48,.94);border:1px solid var(--line);border-radius:16px;padding:17px;min-width:0;box-shadow:0 8px 30px #0002}
+.kpi .label{color:var(--muted);font-size:12px}.kpi .value{font-size:27px;font-weight:700;margin:6px 0 2px}.kpi .hint{font-size:12px;color:var(--muted)}
+.row2{display:grid;grid-template-columns:1.5fr 1fr;gap:14px;margin-top:14px}.row3{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+h2{font-size:16px;margin:0 0 12px}.chart{height:260px;position:relative}canvas{width:100%;height:100%;display:block}
+.tablewrap{overflow:auto;max-height:300px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:9px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+.dataset{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 0;font-size:13px}.dataset:last-child{border:0}
+.foot{margin-top:16px;color:var(--muted);font-size:12px}.empty{color:var(--muted);padding:25px 5px;text-align:center}
+@media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.row2,.row3{grid-template-columns:1fr}}
+@media(max-width:520px){main{padding:20px 12px}.grid{grid-template-columns:1fr 1fr}.kpi .value{font-size:22px}.chart{height:220px}}
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div><h1>Mi Watch Health Dashboard</h1><div class="sub">Local dashboard · data stays on your Mac</div></div>
+    <div class="status" id="status">Connecting to local data…</div>
+  </div>
+  <div class="controls">
+    <label class="muted">From <input type="date" id="from"></label>
+    <label class="muted">To <input type="date" id="to"></label>
+    <button id="apply">Apply dates</button>
+    <button id="reset">Last 30 days</button>
+    <button id="refresh">Refresh JSON</button>
+    <button id="export">Export filtered CSV</button>
+  </div>
+  <section class="grid">
+    <div class="card kpi"><div class="label">Average daily steps</div><div class="value" id="steps">—</div><div class="hint" id="stepsHint">—</div></div>
+    <div class="card kpi"><div class="label">Average sleep</div><div class="value" id="sleep">—</div><div class="hint" id="sleepHint">—</div></div>
+    <div class="card kpi"><div class="label">Average heart rate</div><div class="value" id="hr">—</div><div class="hint" id="hrHint">—</div></div>
+    <div class="card kpi"><div class="label">Active calories</div><div class="value" id="cal">—</div><div class="hint" id="calHint">—</div></div>
+  </section>
+  <section class="row2">
+    <div class="card"><h2>Heart rate history</h2><div class="chart"><canvas id="hrChart"></canvas></div><div class="foot" id="hrFoot"></div></div>
+    <div class="card"><h2>Sleep duration</h2><div class="chart"><canvas id="sleepChart"></canvas></div><div class="foot" id="sleepFoot"></div></div>
+  </section>
+  <section class="row3">
+    <div class="card"><h2>Daily activity</h2><div class="chart"><canvas id="activityChart"></canvas></div><div class="foot" id="activityFoot"></div></div>
+    <div class="card"><h2>Available datasets</h2><div id="datasets"></div><div class="foot" id="generated"></div></div>
+  </section>
+  <section class="card" style="margin-top:14px"><h2>Recent sleep records</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Start</th><th>End</th><th>Duration</th><th>Asleep</th><th>Awake</th><th>Score</th></tr></thead><tbody id="sleepRows"></tbody></table></div></section>
+  <div class="foot">Data is read from your local mi_fitness_export.json file. This dashboard displays watch data; it is not a medical diagnostic tool. Auto-refreshes every 60 seconds while this page is open.</div>
+</main>
+<script>
+let raw=null, filtered=null;
+const $=id=>document.getElementById(id);
+const fmt=n=>Number(n||0).toLocaleString('en-IN');
+const mins=m=>m==null?'—':`${Math.floor(m/60)}h ${Math.round(m%60)}m`;
+const dateOf=x=>(x||'').slice(0,10);
+function records(name){return (raw?.records?.[name]||[]).filter(r=>{let d=dateOf(r.date||r.start_at||r.timestamp||r.collected_at);return (!$('from').value||d>=$('from').value)&&(!$('to').value||d<=$('to').value)})}
+function draw(id,labels,values,color,kind='line'){
+ const c=$(id),ctx=c.getContext('2d'),w=c.clientWidth,h=c.clientHeight,dpr=window.devicePixelRatio||1;c.width=w*dpr;c.height=h*dpr;ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);
+ const vals=values.map(v=>Number(v)||0);if(!vals.length){ctx.fillStyle='#9aabc4';ctx.fillText('No records in selected period',12,h/2);return}
+ const left=42,right=12,top=14,bottom=30,pw=w-left-right,ph=h-top-bottom,min=Math.min(0,...vals),max=Math.max(...vals)*1.12||1;
+ ctx.font='11px system-ui';ctx.strokeStyle='#263750';ctx.fillStyle='#9aabc4';ctx.lineWidth=1;
+ for(let i=0;i<4;i++){let y=top+ph*i/3;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-right,y);ctx.stroke();ctx.fillText(Math.round(max-(max-min)*i/3).toString(),3,y+4)}
+ const x=i=>left+(vals.length===1?pw/2:i*pw/(vals.length-1)), y=v=>top+ph-(v-min)/(max-min||1)*ph;
+ if(kind==='bar'){let bw=Math.max(3,pw/vals.length*.62);vals.forEach((v,i)=>{ctx.fillStyle=color;let yy=y(v);ctx.fillRect(x(i)-bw/2,yy,bw,top+ph-yy)})}
+ else{ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();vals.forEach((v,i)=>i?ctx.lineTo(x(i),y(v)):ctx.moveTo(x(i),y(v)));ctx.stroke();ctx.fillStyle=color;vals.forEach((v,i)=>{if(vals.length<35){ctx.beginPath();ctx.arc(x(i),y(v),2.5,0,Math.PI*2);ctx.fill()}})}
+ ctx.fillStyle='#9aabc4';const step=Math.max(1,Math.ceil(labels.length/6));labels.forEach((l,i)=>{if(i%step===0||i===labels.length-1)ctx.fillText(l.slice(5),Math.min(w-34,x(i)-15),h-8)});
+}
+function render(){
+ const act=records('daily_activity'),sl=records('sleep'),hr=records('heart_rate');
+ const steps=act.filter(r=>r.steps!=null),cal=act.filter(r=>r.active_kcal!=null);
+ const avg=a=>a.length?a.reduce((s,r)=>s+Number(r),0)/a.length:null;
+ const sAvg=avg(steps.map(r=>r.steps)),cAvg=avg(cal.map(r=>r.active_kcal)),hVals=hr.map(r=>Number(r.bpm)).filter(Number.isFinite),hAvg=hVals.length?hVals.reduce((a,b)=>a+b,0)/hVals.length:null;
+ const sleepVals=sl.map(r=>Number(r.time_asleep_minutes??r.duration_minutes)).filter(Number.isFinite),sSleep=sleepVals.length?sleepVals.reduce((a,b)=>a+b,0)/sleepVals.length:null;
+ $('steps').textContent=sAvg==null?'—':fmt(Math.round(sAvg));$('stepsHint').textContent=`${steps.length} activity days`;
+ $('sleep').textContent=sSleep==null?'—':mins(sSleep);$('sleepHint').textContent=`${sl.length} sleep records`;
+ $('hr').textContent=hAvg==null?'—':`${Math.round(hAvg)} bpm`;$('hrHint').textContent=hVals.length?`${Math.min(...hVals)}–${Math.max(...hVals)} bpm · ${hVals.length} readings`:'No heart-rate readings';
+ $('cal').textContent=cAvg==null?'—':`${fmt(Math.round(cAvg))} kcal`;$('calHint').textContent=`${cal.length} activity days`;
+ const hrSorted=[...hr].sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+ const hrLabels=hrSorted.map(r=>dateOf(r.timestamp));draw('hrChart',hrLabels,hrSorted.map(r=>r.bpm),'#7daeff');$('hrFoot').textContent=`${hr.length.toLocaleString()} readings in selected period`;
+ const slSorted=[...sl].sort((a,b)=>new Date(a.start_at)-new Date(b.start_at));draw('sleepChart',slSorted.map(r=>dateOf(r.start_at)),slSorted.map(r=>r.time_asleep_minutes??r.duration_minutes),'#64d6b0','bar');$('sleepFoot').textContent='Sleep duration shown in minutes';
+ const aSorted=[...act].sort((a,b)=>a.date.localeCompare(b.date));draw('activityChart',aSorted.map(r=>r.date),aSorted.map(r=>r.steps),'#ffbd75','bar');$('activityFoot').textContent='Daily step count';
+ const names=['daily_activity','heart_rate','sleep','workouts','workout_detail','workout_gps','body_measurements','spo2','stress','abnormal_heart_beat'];
+ $('datasets').innerHTML=names.map(n=>`<div class="dataset"><span>${n.replaceAll('_',' ')}</span><strong>${(raw.records[n]||[]).length.toLocaleString()}</strong></div>`).join('');
+ $('generated').textContent=`JSON generated: ${raw.generated_at||'unknown'} · Current view uses selected dates`;
+ $('sleepRows').innerHTML=slSorted.slice().reverse().slice(0,30).map(r=>`<tr><td>${dateOf(r.start_at)}</td><td>${(r.start_at||'').slice(11,16)}</td><td>${(r.end_at||'').slice(11,16)}</td><td>${mins(r.duration_minutes)}</td><td>${mins(r.time_asleep_minutes)}</td><td>${mins(r.time_awake_minutes)}</td><td>${r.sleep_score??'—'}</td></tr>`).join('')||'<tr><td colspan="7">No sleep records in selected period</td></tr>';
+ filtered={daily_activity:act,sleep:sl,heart_rate:hr};
+}
+async function load(){try{let r=await fetch('/api/data?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);raw=await r.json();if(!$('from').value){let ds=Object.values(raw.records||{}).flat().map(x=>dateOf(x.date||x.start_at||x.timestamp||x.collected_at)).filter(Boolean).sort();$('from').value=ds.length?ds[Math.max(0,ds.length-30)] : '';}if(!$('to').value){let ds=Object.values(raw.records||{}).flat().map(x=>dateOf(x.date||x.start_at||x.timestamp||x.collected_at)).filter(Boolean).sort();$('to').value=ds.at(-1)||'';}render();$('status').textContent='● Live local JSON · refreshed '+new Date().toLocaleTimeString();}catch(e){$('status').textContent='Data unavailable';console.error(e)}}
+function csv(){let rows=[['dataset','date','value','unit']];for(const r of filtered.daily_activity)rows.push(['daily_activity',r.date,r.steps,'steps']);for(const r of filtered.sleep)rows.push(['sleep',dateOf(r.start_at),r.time_asleep_minutes??r.duration_minutes,'minutes']);for(const r of filtered.heart_rate)rows.push(['heart_rate',dateOf(r.timestamp),r.bpm,'bpm']);let s=rows.map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([s],{type:'text/csv'}));a.download='mi-watch-filtered-data.csv';a.click();URL.revokeObjectURL(a.href)}
+$('apply').onclick=render;$('reset').onclick=()=>{$('from').value='';$('to').value='';load()};$('refresh').onclick=load;$('export').onclick=csv;window.addEventListener('resize',()=>{if(raw)render()});load();setInterval(load,60000);
+</script>
+</body></html>
